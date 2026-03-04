@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "task_name": "RobocopyBackup",
+    "log_root": "C:\\BackupTools\\RobocopyBackup\\logs",
+    "default_flags": ["/COPY:DAT", "/DCOPY:DAT", "/R:2", "/W:2", "/FFT", "/NP", "/XJ", "/XJD", "/XJF"],
+    "schedule": {
+      "type": "daily",
+      "time": "02:00"
+    }
+  },
+  "backup_jobs": {
+    "DocumentsToDownloads": {
+      "enabled": true,
+      "source": "C:\\Users\\%USERNAME%\\Documents",
+      "dest": "C:\\Users\\%USERNAME%\\Downloads\\DocumentsBackup",
+      "flags": ["/E", "/XD", "node_modules", ".git", "/XF", "*.tmp", "*.log"]
+    }
+  }
+}

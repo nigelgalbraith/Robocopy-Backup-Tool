@@ -9,14 +9,15 @@
     }
   },
   "backup_jobs": {
+    
     "DocumentsToDownloads": {
       "enabled": true,
       "source": "C:\\Users\\%USERNAME%\\Documents",
       "dest": "C:\\Users\\%USERNAME%\\Downloads\\DocumentsBackup",
       "flags": ["/E", "/XD", "node_modules", ".git", "/XF", "*.tmp", "*.log"]
     },
-
-  "PicturesBackup": {
+    
+    "PicturesBackup": {
       "enabled": true,
       "source": "C:\\Users\\%USERNAME%\\Pictures",
       "dest": "C:\\Users\\%USERNAME%\\Downloads\\PicturesBackup",

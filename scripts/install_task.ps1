@@ -72,11 +72,15 @@ $action = New-ScheduledTaskAction `
 # Create a daily trigger at the configured time.
 $trigger = New-ScheduledTaskTrigger -Daily -At $at
 
+# Allow the task to run later if the scheduled time was missed.
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
+
 # Register or update the scheduled task in Windows Task Scheduler.
 Register-ScheduledTask `
   -TaskName $taskName `
   -Action $action `
   -Trigger $trigger `
+  -Settings $settings `
   -Description "Robocopy Backup Tool (JSON-configured)" `
   -Force | Out-Null
 

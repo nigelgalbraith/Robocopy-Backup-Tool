@@ -1,4 +1,4 @@
-Import-Module (Join-Path $PSScriptRoot "schedule_helpers.psm1") -Force -Function Test-TimeString
+Import-Module (Join-Path $PSScriptRoot "path_helpers.psm1") -Force -Function Get-NormalizedPath
 
 # Purpose: Read and parse the JSON config file
 function Read-Config {
@@ -45,6 +45,13 @@ function Get-ConfigValue {
 function Get-LogRoot {
   param([object]$Config)
   return (Get-NormalizedPath -Path (Get-ConfigValue -InputObject $Config -Path 'meta.log_root'))
+}
+
+# Purpose: Validate time text in HH:MM 24-hour format
+function Test-TimeString {
+  param([string]$TimeStr)
+  if ([string]::IsNullOrWhiteSpace($TimeStr)) { return $false }
+  return ($TimeStr -match '^([01]\d|2[0-3]):[0-5]\d$')
 }
 
 # Purpose: Validate config values against required path and type checks
@@ -174,4 +181,4 @@ function Test-StringArray {
   }
 }
 
-Export-ModuleMember -Function Read-Config, Get-ConfigValue, Test-ConfigValues, Test-StringArray, Test-BackupConfig, Test-ScheduleConfig, Test-LogConfig, Get-TaskName, Get-LogRoot, ConvertTo-ScheduleTime
+Export-ModuleMember -Function Read-Config, Get-ConfigValue, Test-ConfigValues, Test-StringArray, Test-BackupConfig, Test-ScheduleConfig, Test-LogConfig, Get-TaskName, Get-LogRoot

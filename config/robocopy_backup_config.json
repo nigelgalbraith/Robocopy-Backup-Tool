@@ -6,7 +6,7 @@
     "delaySeconds": 60,
     "schedule": {
       "type": "daily",
-      "time": "21:06"
+      "time": "21:50"
     }
   },
   "backup_jobs": {

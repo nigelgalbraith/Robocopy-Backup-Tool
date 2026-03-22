@@ -4,16 +4,24 @@ A simple, configurable PowerShell backup tool built on top of Windows **Robocopy
 
 The tool reads a JSON configuration file that defines backup jobs and executes them automatically.
 
-It supports:
+---
+
+## Features
 
 * Multiple backup jobs
 * Environment variable expansion (e.g. `%USERNAME%`)
 * Automatic log generation
 * Safe **Dry Run mode**
 * Optional **Windows Task Scheduler automation**
-* A simple **menu interface**
+* Simple interactive menu
+* Structured internal modules (config, path, schedule)
 
-The tool works with **PowerShell 7 or Windows PowerShell 5.1**.
+---
+
+## Compatibility
+
+* Windows PowerShell 5.1
+* PowerShell 7+
 
 ---
 
@@ -25,7 +33,7 @@ Example installation folder:
 C:\BackupTools\RobocopyBackup\
 ```
 
-Recommended layout:
+### Recommended layout
 
 ```
 RobocopyBackup
@@ -43,22 +51,30 @@ RobocopyBackup
     ├── run_menu.ps1
     ├── install_task.ps1
     ├── remove_task.ps1
-    └── open_latest_log.ps1
+    ├── open_latest_log.ps1
+    │
+    └── modules
+        ├── config_helpers.psm1
+        ├── path_helpers.psm1
+        └── schedule_helpers.psm1
 ```
 
-### Folder descriptions
+---
 
-| Folder    | Purpose                             |
-| --------- | ----------------------------------- |
-| `config`  | Backup job configuration            |
-| `scripts` | PowerShell scripts                  |
-| `logs`    | Backup logs generated automatically |
+## Folder descriptions
+
+| Folder    | Purpose                  |
+| --------- | ------------------------ |
+| `config`  | Backup job configuration |
+| `scripts` | PowerShell scripts       |
+| `modules` | Shared helper functions  |
+| `logs`    | Backup logs              |
 
 ---
 
 # Starting the Tool
 
-Launch the tool using:
+Run:
 
 ```
 run_backup.bat
@@ -66,10 +82,12 @@ run_backup.bat
 
 The launcher will:
 
-* Use **PowerShell 7 (pwsh)** if installed
+* Use **PowerShell 7 (`pwsh`)** if available
 * Otherwise fall back to **Windows PowerShell**
 
-You will see the interactive menu:
+---
+
+## Menu
 
 ```
 Robocopy Backup Tool
@@ -86,13 +104,15 @@ Robocopy Backup Tool
 
 # Configuration
 
-Backup jobs are defined in:
+Located at:
 
 ```
 config\robocopy_backup_config.json
 ```
 
-Example configuration:
+---
+
+## Example
 
 ```json
 {
@@ -113,68 +133,57 @@ Example configuration:
 
 ---
 
-# Configuration Fields
+## Configuration Fields
 
-### Meta section
+### Meta
 
-| Field           | Description                                |
-| --------------- | ------------------------------------------ |
-| `log_root`      | Folder where logs are stored               |
-| `default_flags` | Default Robocopy flags applied to all jobs |
+| Field           | Description                  |
+| --------------- | ---------------------------- |
+| `log_root`      | Folder where logs are stored |
+| `default_flags` | Default Robocopy flags       |
 
 ---
 
-### Backup job fields
+### Backup Jobs
 
-| Field     | Description                          |
-| --------- | ------------------------------------ |
-| `enabled` | Enables or disables the job          |
-| `source`  | Source folder                        |
-| `dest`    | Destination folder                   |
-| `flags`   | Optional job-specific Robocopy flags |
+| Field     | Description             |
+| --------- | ----------------------- |
+| `enabled` | Enable/disable job      |
+| `source`  | Source folder           |
+| `dest`    | Destination folder      |
+| `flags`   | Optional Robocopy flags |
 
-Environment variables such as `%USERNAME%` are expanded automatically.
+Environment variables (e.g. `%USERNAME%`) are automatically expanded.
 
 ---
 
 # Dry Run Mode (Recommended)
 
-Before performing a real backup, run a **Dry Run**.
+Run a safe simulation before copying files.
 
-This simulates the backup without copying files.
-
-From the menu choose:
+Menu:
 
 ```
 1) Dry run (no copy)
 ```
 
-or run directly:
+Or direct:
 
 ```
 pwsh scripts\robocopy_backup.ps1 -DryRun
 ```
 
-This allows you to confirm:
-
-* Source paths
-* Destination paths
-* Robocopy flags
-* Job configuration
-
 ---
 
 # Running the Backup
 
-To run the backup manually:
-
-Menu option:
+Menu:
 
 ```
 2) Run backup now
 ```
 
-or directly:
+Or:
 
 ```
 pwsh scripts\robocopy_backup.ps1
@@ -184,7 +193,7 @@ pwsh scripts\robocopy_backup.ps1
 
 # Logs
 
-Logs are automatically written to the configured log folder.
+Logs are written to the configured folder.
 
 Example:
 
@@ -192,47 +201,50 @@ Example:
 logs\
 ```
 
-Each job creates a timestamped log file:
+### Behaviour
 
-```
-DocumentsBackup_2026-03-04_20-31-12.log
-```
+* A **single run log** is created per execution:
 
-You can open the newest log from the menu:
+  ```
+  backup_run_YYYY-MM-DD_HH-MM-SS.log
+  ```
+
+* Each job writes into the same run log
+
+* Robocopy output is appended using `/LOG+`
+
+---
+
+## Open latest log
+
+Menu:
 
 ```
 5) Open latest log
 ```
 
+If the log folder does not exist or no logs are present, the tool exits cleanly.
+
 ---
 
-# Automating the Backup
+# Scheduled Tasks
 
-The tool can install a scheduled task to run backups automatically.
-
-Menu option:
+Install/update:
 
 ```
 3) Install/Update scheduled task
 ```
 
-This creates a Windows Task Scheduler job using the schedule defined in the configuration file.
-
----
-
-# Removing Automation
-
-To remove the scheduled task:
-
-Menu option:
+Remove:
 
 ```
 4) Remove scheduled task
 ```
 
-or run:
+Or direct:
 
 ```
+pwsh scripts\install_task.ps1
 pwsh scripts\remove_task.ps1
 ```
 
@@ -241,16 +253,17 @@ pwsh scripts\remove_task.ps1
 # Requirements
 
 * Windows 10 / Windows 11
-* Robocopy (included with Windows)
+* Robocopy (built-in)
 * PowerShell 5.1 or PowerShell 7
 
 ---
 
 # Notes
 
-* Always test configuration changes using **Dry Run mode**.
-* Robocopy exit codes are interpreted automatically by the script.
-* Each backup job runs independently.
+* Always use **Dry Run** before real execution
+* Jobs are executed independently
+* Robocopy exit codes are interpreted automatically
+* Safe path validation prevents destructive configurations
 
 ---
 

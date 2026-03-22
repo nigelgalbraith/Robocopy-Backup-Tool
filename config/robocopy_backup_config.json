@@ -1,11 +1,12 @@
 {
   "meta": {
     "task_name": "RobocopyBackup",
-    "log_root": "logs",
+    "log_root": "C:\\Users\\%USERNAME%\\Downloads\\RobocopyBackupLogs",
     "default_flags": ["/COPY:DAT", "/DCOPY:DAT", "/R:2", "/W:2", "/FFT", "/NP", "/XJ", "/XJD", "/XJF"],
+    "delaySeconds": 60,
     "schedule": {
       "type": "daily",
-      "time": "02:00"
+      "time": "21:06"
     }
   },
   "backup_jobs": {
@@ -14,14 +15,14 @@
       "enabled": true,
       "source": "C:\\Users\\%USERNAME%\\Documents",
       "dest": "C:\\Users\\%USERNAME%\\Downloads\\DocumentsBackup",
-      "flags": ["/E", "/XD", "node_modules", ".git", "/XF", "*.tmp", "*.log"]
+      "flags": ["/E", "/XD", "node_modules", ".git", "/XF", "*.tmp", "*.log", "desktop.ini", "Thumbs.db"]
     },
     
     "PicturesBackup": {
       "enabled": true,
       "source": "C:\\Users\\%USERNAME%\\Pictures",
       "dest": "C:\\Users\\%USERNAME%\\Downloads\\PicturesBackup",
-      "flags": ["/E", "/XD", "node_modules", ".git", "/XF", "*.tmp", "*.log"]
+      "flags": ["/E", "/XD", "node_modules", ".git", "/XF", "*.tmp", "*.log", "desktop.ini", "Thumbs.db"]
     }
   }
 }

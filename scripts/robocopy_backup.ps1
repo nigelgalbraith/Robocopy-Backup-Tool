@@ -1,180 +1,239 @@
+# IMPORTS
 param(
-  # Path to the JSON configuration file.
-  # Defaults to ../config/robocopy_backup_config.json relative to this script.
   [string]$ConfigPath = (Join-Path (Join-Path $PSScriptRoot "..\config") "robocopy_backup_config.json"),
-
-  # Optional switch to run Robocopy in "dry run" mode.
-  # When enabled, Robocopy lists actions without actually copying files.
   [switch]$DryRun
 )
 
-# Writes a timestamped message to both the console and a log file.
+Import-Module (Join-Path $PSScriptRoot "modules\config_helpers.psm1") -Force -Function Read-Config, Test-BackupConfig, Get-LogRoot
+Import-Module (Join-Path $PSScriptRoot "modules\path_helpers.psm1") -Force -Function Expand-EnvPath, Get-NormalizedPath, Test-PathConflict
+
+# LOGGING
+# Purpose: Write a timestamped line to the run log and optionally the console
 function Write-Log {
-  param([string]$Message, [string]$LogFile)
-
-  # Generate timestamp for the log entry.
-  $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-  # Construct the log line.
-  $line = "$ts : $Message"
-
-  # Display the message in the console.
-  Write-Host $line
-
-  # Append the message to the log file.
-  Add-Content -Path $LogFile -Value $line
-}
-
-# Expands environment variables in a path (e.g. %USERPROFILE%).
-function Expand-EnvPath {
-  param([string]$Path)
-
-  # Use .NET method to resolve environment variables.
-  return [Environment]::ExpandEnvironmentVariables($Path)
-}
-
-# Generates a timestamped log file path for a backup job.
-function Get-LogFile {
-  param([string]$LogRoot, [string]$JobKey)
-
-  # Ensure the root log directory exists.
-  if (!(Test-Path $LogRoot)) { New-Item -ItemType Directory -Path $LogRoot | Out-Null }
-
-  # Create a timestamp used in the log file name.
-  $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-
-  # Return the full log file path.
-  return Join-Path $LogRoot "$JobKey`_$stamp.log"
-}
-
-# Executes a single Robocopy backup job.
-function Invoke-RobocopyJob {
   param(
-    # Unique key identifying the job (used for logging).
-    [string]$JobKey,
-
-    # Meta configuration section from the JSON config.
-    [object]$Meta,
-
-    # Job-specific configuration object.
-    [object]$Job,
-
-    # Optional switch for dry run mode.
-    [switch]$DryRun
+    [string]$Message,
+    [string]$LogFile,
+    [switch]$NoConsole
   )
+  $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+  $line = "$ts : $Message"
+  if (-not $NoConsole) { Write-Host $line }
+  Add-Content -LiteralPath $LogFile -Value $line
+}
 
-  # Determine log folder location from config.
-  $logRoot = Expand-EnvPath $Meta.log_root
 
-  # Generate a new log file for this job.
-  $logFile = Get-LogFile -LogRoot $logRoot -JobKey $JobKey
+# Purpose: Create a timestamped run log file path and ensure log root exists
+function New-RunLogFile {
+  param([string]$LogRoot)
+  if (!(Test-Path -LiteralPath $LogRoot)) { New-Item -ItemType Directory -Path $LogRoot -Force | Out-Null }
+  $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+  return (Join-Path $LogRoot "backup_run_$stamp.log")
+}
 
-  # Skip the job if it is disabled.
+
+# BACKUP OPERATIONS
+# Purpose: Map robocopy exit codes to normalized outcome values
+function Get-RobocopyOutcome {
+  param([int]$ExitCode)
+  # Robocopy uses non-zero success and warning codes; 8+ indicates failure
+  if ($ExitCode -ge 8) { return 'FAIL' }
+  if ($ExitCode -eq 0) { return 'OK' }
+  return 'WARN'
+}
+
+
+# LOGGING
+# Purpose: Write a visual section boundary in the run log
+function Start-LogSection {
+  param(
+    [string]$Title,
+    [string]$LogFile
+  )
+  Write-Log ('=' * 78) -LogFile $LogFile
+  Write-Log $Title -LogFile $LogFile
+  Write-Log ('=' * 78) -LogFile $LogFile
+}
+
+
+# BACKUP OPERATIONS
+# Purpose: Execute one backup job and write its result section to the run log
+# BACKUP OPERATIONS
+# Purpose: Validate job state and return skip result if disabled
+function Test-JobEnabled {
+  param([string]$JobKey, [object]$Job, [string]$LogFile)
   if ($Job.enabled -ne $true) {
-    Write-Log "[SKIP] $JobKey disabled" $logFile
-    return 0
+    Write-Log '[SKIP] Job disabled.' -LogFile $LogFile
+    return [pscustomobject]@{ JobKey = $JobKey; Outcome = 'SKIP'; ExitCode = 0; Message = 'Job disabled.' }
   }
+  return $null
+}
 
-  # Expand environment variables in source and destination paths.
-  $src = Expand-EnvPath $Job.source
-  $dst = Expand-EnvPath $Job.dest
 
-  # Ensure the source directory exists.
-  if (!(Test-Path $src)) {
-    Write-Log "[ERROR] Source not found: $src" $logFile
-    return 2
+# Purpose: Resolve and normalize job paths
+function Resolve-JobPaths {
+  param([object]$Job, [string]$LogFile)
+  try {
+    $src = Get-NormalizedPath -Path $Job.source
+    $dst = Get-NormalizedPath -Path $Job.dest
+    return @{ Source = $src; Dest = $dst }
+  } catch {
+    Write-Log "[FAIL] Invalid source or destination path: $($_.Exception.Message)" -LogFile $LogFile
+    return $null
   }
+}
 
-  # Create the destination directory if it does not exist.
-  if (!(Test-Path $dst)) {
-    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+
+# Purpose: Validate source and destination paths
+function Test-JobPaths {
+  param([string]$JobKey, [string]$Src, [string]$Dst, [string]$LogFile)
+  if (Test-PathConflict -SourcePath $Src -DestPath $Dst) {
+    Write-Log '[FAIL] Unsafe source/destination relationship detected.' -LogFile $LogFile
+    return [pscustomobject]@{ JobKey = $JobKey; Outcome = 'FAIL'; ExitCode = 2; Message = 'Unsafe source/destination relationship.' }
   }
+  if (!(Test-Path -LiteralPath $Src)) {
+    Write-Log "[FAIL] Source not found: $Src" -LogFile $LogFile
+    return [pscustomobject]@{ JobKey = $JobKey; Outcome = 'FAIL'; ExitCode = 2; Message = 'Source not found.' }
+  }
+  if (!(Test-Path -LiteralPath $Dst)) {
+    New-Item -ItemType Directory -Path $Dst -Force | Out-Null
+    Write-Log '[INFO] Destination folder created.' -LogFile $LogFile
+  }
+  return $null
+}
 
-  # Load default flags from the meta configuration.
+
+# Purpose: Build robocopy argument list
+function Get-RobocopyArguments {
+  param([object]$Meta, [object]$Job, [string]$Src, [string]$Dst, [string]$LogFile, [switch]$DryRun)
   $defaultFlags = @()
   if ($Meta.default_flags) { $defaultFlags = @($Meta.default_flags) }
-
-  # Load job-specific flags from the job configuration.
   $jobFlags = @()
   if ($Job.flags) { $jobFlags = @($Job.flags) }
+  $flags = @($defaultFlags + $jobFlags)
+  if ($DryRun) { $flags += '/L' }
+  Write-Log "Flags:  $($flags -join ' ')" -LogFile $LogFile
+  return @($Src, $Dst) + $flags + @("/LOG+:$LogFile")
+}
 
-  # Combine default and job-specific flags.
-  $flags = @()
-  $flags += $defaultFlags
-  $flags += $jobFlags
 
-  # Add dry-run flags if requested.
-  if ($DryRun) {
-      $flags += "/L"     # List only (no actual file operations)
-      $flags += "/TEE"   # Display output in console as well as log
-  }
-
-  # Log job execution details.
-  Write-Log "Mode: $($(if ($DryRun) { 'DRY RUN' } else { 'LIVE' }))" $logFile
-  Write-Log "Job: $JobKey" $logFile
-  Write-Log "Source: $src" $logFile
-  Write-Log "Dest:   $dst" $logFile
-  Write-Log "Flags:  $($flags -join ' ')" $logFile
-
-  # Construct Robocopy argument list.
-  $args = @($src, $dst) + $flags + @("/LOG+:$logFile")
-
+# Purpose: Execute robocopy and return outcome
+function Invoke-Robocopy {
+  param([string]$JobKey, [array]$Arguments, [string]$LogFile)
   try {
-    # Execute Robocopy and capture output.
-    $out = & robocopy @args 2>&1
-
-    # Capture Robocopy exit code.
+    & robocopy @Arguments | Out-Null
     $rc = $LASTEXITCODE
-
-    # If in dry run mode, print Robocopy output to the console.
-    if ($DryRun) { $out | ForEach-Object { Write-Host $_ } }
-
   } catch {
-    # Log unexpected execution errors.
-    Write-Log "[FAIL] Robocopy execution failed: $($_.Exception.Message)" $logFile
-    return 99
+    Write-Log "[FAIL] Robocopy execution failed: $($_.Exception.Message)" -LogFile $LogFile
+    return [pscustomobject]@{ JobKey = $JobKey; Outcome = 'FAIL'; ExitCode = 99; Message = 'Robocopy execution failed.' }
   }
+  $outcome = Get-RobocopyOutcome -ExitCode $rc
+  Write-Log "[${outcome}] Robocopy exit code: $rc" -LogFile $LogFile
+  return [pscustomobject]@{ JobKey = $JobKey; Outcome = $outcome; ExitCode = $rc; Message = 'Completed.' }
+}
 
-  # Robocopy exit codes >= 8 indicate a failure.
-  if ($rc -ge 8) {
-    Write-Log "[FAIL] Robocopy exit code: $rc" $logFile
-    return $rc
+
+# Purpose: Execute one backup job and write its result section to the run log
+function Invoke-RobocopyJob {
+  param(
+    [string]$JobKey,
+    [object]$Meta,
+    [object]$Job,
+    [string]$LogFile,
+    [switch]$DryRun
+  )
+  Start-LogSection -Title "JOB: $JobKey" -LogFile $LogFile
+  # --- Validate inputs ---
+  $skip = Test-JobEnabled -JobKey $JobKey -Job $Job -LogFile $LogFile
+  if ($skip) { return $skip }
+  # --- Resolve paths ---
+  $paths = Resolve-JobPaths -Job $Job -LogFile $LogFile
+  if (-not $paths) {
+    return [pscustomobject]@{ JobKey = $JobKey; Outcome = 'FAIL'; ExitCode = 99; Message = 'Invalid source or destination path.' }
   }
+  $src = $paths.Source
+  $dst = $paths.Dest
+  Write-Log "Mode:   $(if ($DryRun) { 'DRY RUN' } else { 'LIVE' })" -LogFile $LogFile
+  Write-Log "Source: $src" -LogFile $LogFile
+  Write-Log "Dest:   $dst" -LogFile $LogFile
+  # --- Validate paths ---
+  $pathCheck = Test-JobPaths -JobKey $JobKey -Src $src -Dst $dst -LogFile $LogFile
+  if ($pathCheck) { return $pathCheck }
+  # --- Build arguments ---
+  $arguments = Get-RobocopyArguments -Meta $Meta -Job $Job -Src $src -Dst $dst -LogFile $LogFile -DryRun:$DryRun
+  # --- Execute ---
+  return Invoke-Robocopy -JobKey $JobKey -Arguments $arguments -LogFile $LogFile
+}
 
-  # Successful completion.
-  Write-Log "[OK] Robocopy exit code: $rc" $logFile
+
+# Purpose: Write per-job outcomes and aggregate totals to the run log
+function Write-RunSummary {
+  param(
+    [array]$Results,
+    [string]$LogFile
+  )
+  # --- Build run summary ---
+  Start-LogSection -Title 'RUN SUMMARY' -LogFile $LogFile
+  foreach ($result in $Results) {
+    Write-Log ("{0,-24} Outcome={1,-5} ExitCode={2,-3} Message={3}" -f $result.JobKey, $result.Outcome, $result.ExitCode, $result.Message) -LogFile $LogFile
+  }
+  $failed = @($Results | Where-Object { $_.Outcome -eq 'FAIL' }).Count
+  $warnings = @($Results | Where-Object { $_.Outcome -eq 'WARN' }).Count
+  $skipped = @($Results | Where-Object { $_.Outcome -eq 'SKIP' }).Count
+  $ok = @($Results | Where-Object { $_.Outcome -eq 'OK' }).Count
+  Write-Log "Totals: OK=$ok WARN=$warnings SKIP=$skipped FAIL=$failed" -LogFile $LogFile
+}
+
+
+# MAIN
+# Purpose: Run all configured backup jobs and return process exit status
+function Main {
+  param(
+    [string]$ConfigPath,
+    [switch]$DryRun
+  )
+  # --- Validate inputs ---
+  $resolvedConfigPath = (Resolve-Path -LiteralPath $ConfigPath).Path
+  $cfg = Read-Config -Path $resolvedConfigPath
+  Test-BackupConfig -Config $cfg
+  $meta = $cfg.meta
+  $delaySeconds = [int]$meta.delaySeconds
+  $logRoot = Get-LogRoot -Config $cfg
+  if (!(Test-Path -LiteralPath $logRoot)) {
+    New-Item -ItemType Directory -Path $logRoot | Out-Null
+  }
+  $runLog = New-RunLogFile -LogRoot $logRoot
+  Start-LogSection -Title 'RUN START' -LogFile $runLog
+  Write-Log "Config:  $resolvedConfigPath" -LogFile $runLog
+  Write-Log "Mode:    $(if ($DryRun) { 'DRY RUN' } else { 'LIVE' })" -LogFile $runLog
+  Write-Log "LogFile: $runLog" -LogFile $runLog
+  # Honor configured delay to stagger backup start time when needed
+  if ($delaySeconds -gt 0) {
+    Write-Log "Delay:   $delaySeconds seconds" -LogFile $runLog
+    Start-Sleep -Seconds $delaySeconds
+  } else {
+    Write-Log 'Delay:   0 seconds' -LogFile $runLog
+  }
+  # --- Write job section to run log ---
+  $results = @()
+  $jobs = $cfg.backup_jobs.PSObject.Properties
+  foreach ($job in $jobs) {
+    $results += Invoke-RobocopyJob -JobKey $job.Name -Meta $meta -Job $job.Value -LogFile $runLog -DryRun:$DryRun
+  }
+  Write-RunSummary -Results $results -LogFile $runLog
+  $failed = @($results | Where-Object { $_.Outcome -eq 'FAIL' }).Count
+  if ($failed -gt 0) {
+    Write-Log 'Final result: FAIL' -LogFile $runLog
+    return 2
+  }
+  Write-Log 'Final result: OK' -LogFile $runLog
   return 0
 }
 
-# Ensure the configuration file exists before proceeding.
-if (!(Test-Path $ConfigPath)) { throw "Config not found: $ConfigPath" }
 
-# Load configuration data from the JSON file.
-$cfg = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
-
-# Extract metadata section.
-$meta = $cfg.meta
-
-# Extract backup jobs collection.
-$jobs = $cfg.backup_jobs
-
-# Track whether any job fails.
-$anyFail = $false
-
-# Iterate through each backup job defined in the config.
-foreach ($prop in $jobs.PSObject.Properties) {
-  $key = $prop.Name
-  $job = $prop.Value
-
-  # Execute the job.
-  $rc = Invoke-RobocopyJob -JobKey $key -Meta $meta -Job $job -DryRun:$DryRun
-
-  # Record failure if any job returns a non-zero code.
-  if ($rc -ne 0) { $anyFail = $true }
+try {
+  $code = Main -ConfigPath $ConfigPath -DryRun:$DryRun
+  exit $code
+} catch {
+  Write-Host "[ERROR] $($_.Exception.Message)"
+  exit 1
 }
-
-# Exit with a failure code if any job failed.
-if ($anyFail) { exit 2 }
-
-# Otherwise exit successfully.
-exit 0
